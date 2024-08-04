@@ -1,5 +1,6 @@
-# First, in your terminal.
-#
+# Requires 16Gb VRAM (e.g. NVidia RTX 4080 or better)
+# First follow installation instructions from https://github.com/black-forest-labs/flux
+# Next in your terminal
 # $ python3 -m virtualenv env
 # $ source env/bin/activate
 # $ pip install torch torchvision transformers sentencepiece protobuf accelerate
@@ -31,7 +32,6 @@ def set_seed(seed: int = 42) -> None:
     # Set a fixed value for the hash seed
     os.environ["PYTHONHASHSEED"] = str(seed)
     print(f"Random seed set as {seed}")
-
 
 dtype = torch.bfloat16
 
