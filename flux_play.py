@@ -80,7 +80,7 @@ set_seed()
 generator = torch.Generator()
 for a in range(1,10):
     image = pipe(
-        prompt='professional photo, a young angry female elf with greyish shoulder-length hair, pale skin and fierce bright blue eyes, dressed in sleek black, hooded, aiming a longbow from hiding in an ancient dark forest', 
+        prompt='a proud business consultant holding a card with the text "AMIS" in red playful letters, professional marketing photo', 
         width=1024,
         height=1024,
         num_inference_steps=28,
