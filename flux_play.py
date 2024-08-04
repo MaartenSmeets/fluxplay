@@ -87,5 +87,5 @@ for a in range(1,10):
         generator=generator,
         guidance_scale=3.5,
     ).images[0]
-    image.save(str(generator.seed)+'.png')
+    image.save(str(generator.seed())+'.png')
     print("Image saved as", str(generator.seed())+'.png')
