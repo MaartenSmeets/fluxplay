@@ -4,10 +4,10 @@ import uuid
 import websocket
 import urllib.request
 import urllib.parse
+import random
+random.seed(time.time())
 
-#Requires ComfyUI running on localhost. Used the following sample workflow: https://comfyanonymous.github.io/ComfyUI_examples/flux/. 
-#Also used https://github.com/comfyanonymous/ComfyUI/blob/master/script_examples/basic_api_example.py and https://github.com/comfyanonymous/ComfyUI/blob/master/script_examples/websockets_api_example.py
-
+#Requires ComfyUI running on localhost. Used the following sample workflow: https://comfyanonymous.github.io/ComfyUI_examples/flux/
 SERVER_URL = "127.0.0.1:8188"
 client_id = str(uuid.uuid4())
 
@@ -252,9 +252,9 @@ prompt_text = """
 def generate_multiple_images(prompt, num_images):
     ws = websocket.create_connection(f"ws://{SERVER_URL}/ws?clientId={client_id}")
     for i in range(num_images):
-        prompt["25"]["inputs"]["noise_seed"] = round(time.time()) + i  # Update seed for each image
+        prompt["25"]["inputs"]["noise_seed"] = random.getrandbits(64)  # Update seed for each image
         images = get_images(ws, prompt)
-        print(f"Images for seed {prompt['25']['inputs']['noise_seed']}: {images}")
+        print(f"Image for seed {prompt['25']['inputs']['noise_seed']}")
 
 prompt = json.loads(prompt_text)
 prompt["6"]["inputs"]["text"] = "pancake"
