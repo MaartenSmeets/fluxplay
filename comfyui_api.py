@@ -5,9 +5,11 @@ import websocket
 import urllib.request
 import urllib.parse
 import random
+
+# Seed the random number generator with the current time
 random.seed(time.time())
 
-#Requires ComfyUI running on localhost. Used the following sample workflow: https://comfyanonymous.github.io/ComfyUI_examples/flux/
+# Requires ComfyUI running on localhost. Used the following sample workflow: https://comfyanonymous.github.io/ComfyUI_examples/flux/
 SERVER_URL = "127.0.0.1:8188"
 client_id = str(uuid.uuid4())
 
@@ -256,7 +258,11 @@ def generate_multiple_images(prompt, num_images):
         images = get_images(ws, prompt)
         print(f"Image for seed {prompt['25']['inputs']['noise_seed']}")
 
+# Read the prompt text from a file
+with open("prompt_text.txt", "r") as file:
+    prompt_text_from_file = file.read().strip()
+
 prompt = json.loads(prompt_text)
-prompt["6"]["inputs"]["text"] = "pancake"
+prompt["6"]["inputs"]["text"] = prompt_text_from_file
 
 generate_multiple_images(prompt, 5)  # Generate 5 images
