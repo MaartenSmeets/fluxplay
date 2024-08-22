@@ -1,3 +1,4 @@
+import requests
 import json
 import time
 import uuid
@@ -5,14 +6,28 @@ import websocket
 import urllib.request
 import urllib.parse
 import random
-from ollama import generate  # Assuming you use the Ollama library for LLM
+import logging
+import traceback
+import re
+
+# Configuration parameters
+SERVER_URL = "127.0.0.1:8188"
+LLM_MODEL = "gemma2unc:latest"  # Replace with your actual model name
+NUM_IMAGES = 30
+BATCH_SIZE = 3
+TEMPERATURE = 0.7  # Adjust the temperature for creative prompt generation
+CLIENT_ID = str(uuid.uuid4())
+USE_PROMPT_DIVERSIFICATION = True  # Set to False if prompt diversification is not needed
+
+# UNET model selection (two options)
+UNET_MODEL = "flux1-dev.safetensors"
+#UNET_MODEL = "fluxunchainedAndSchnfuFluxD_fuT516xfp8E4m3fnV11.safetensors"
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Seed the random number generator with the current time
 random.seed(time.time())
-
-# Requires ComfyUI running on localhost. Used the following sample workflow: https://comfyanonymous.github.io/ComfyUI_examples/flux/
-SERVER_URL = "127.0.0.1:8188"
-client_id = str(uuid.uuid4())
 
 # ComfyUI default workflow prompt
 prompt_text = """
@@ -81,7 +96,7 @@ prompt_text = """
   },
   "12": {
     "inputs": {
-      "unet_name": "flux1-dev.safetensors",
+      "unet_name": "flux1-dev.safetensors",  # Here is where the UNET model is selected
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -209,8 +224,11 @@ prompt_text = """
 }
 """
 
+# Replace UNET model in the prompt JSON with the selected model
+prompt_text = prompt_text.replace("flux1-dev.safetensors", UNET_MODEL)
+
 def queue_prompt(prompt):
-    p = {"prompt": prompt, "client_id": client_id}
+    p = {"prompt": prompt, "client_id": CLIENT_ID}
     data = json.dumps(p).encode('utf-8')
     req = urllib.request.Request(f"http://{SERVER_URL}/prompt", data=data, headers={'Content-Type': 'application/json'})
     return json.loads(urllib.request.urlopen(req).read())
@@ -252,26 +270,95 @@ def get_images(ws, prompt):
 
     return output_images
 
-def diversify_prompt(base_prompt, llm_model="your-llm-model"):
-    """Use LLM to diversify the prompt for each batch."""
-    prompt = f"Please modify the following prompt by rephrasing and diversifying several aspects but stay thematically similar and stay concise; do not use words not adding to the visual representation. Return only the complete prompt and nothing else: {base_prompt}"
-    response = generate(model=llm_model, prompt=prompt)
-    return response.get('response', base_prompt).strip()
+def unpack_dict_values(d):
+    """Recursively unpack dictionary values into a flat list of strings."""
+    result = []
+    for value in d.values():
+        if isinstance(value, dict):
+            result.extend(unpack_dict_values(value))
+        else:
+            result.append(str(value))
+    return result
 
-def generate_multiple_images(prompt, num_images, batch_size, llm_model):
-    ws = websocket.create_connection(f"ws://{SERVER_URL}/ws?clientId={client_id}")
+def clean_json_string(json_str):
+    """Cleans up a JSON string by removing unexpected characters and extra whitespace."""
+    cleaned_str = re.sub(r'\n\s*\n', '', json_str)  # Remove excessive newlines
+    cleaned_str = re.sub(r'\s+', ' ', cleaned_str).strip()  # Collapse whitespace
+    return cleaned_str
+
+def diversify_prompt(base_prompt, llm_model=LLM_MODEL, temperature=TEMPERATURE):
+    original_prompt = (
+        f"Utilize your expertise in engineering stable diffusion prompts to create an elaborate, "
+        f"highly detailed, and unique prompt which should be based on the provided base prompt (rephrasing, diversification and elaboration is allowed). "
+        f"Avoid repetition. Focus on clear visual elements, expressiveness, and emotional impact, with a strong emphasis on precision and creative "
+        f"variation in style and colors. The generated prompt should be a thoughtful, complex creation. Prefer explicit descriptions."
+        f"Present the enhanced prompt in a concise format, integrating specific adjectives and details. Output only the prompt on a single line. Base prompt: {base_prompt}"
+    )
+
+    url = "http://localhost:11434/api/generate"
+    payload = {
+        "model": llm_model,
+        "prompt": original_prompt,
+        "temperature": temperature,
+        "stream": False
+    }
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()  # Will raise an error for HTTP errors
+        response_json = response.json()
+
+        # Logging for debugging
+        logging.debug(f"Response status code: {response.status_code}")
+        logging.debug(f"Response content: {json.dumps(response_json, indent=2)}")
+
+        # Parsing the response
+        if 'response' in response_json:
+            enhanced_prompt_json_str = response_json['response']
+            try:
+                # Parse the JSON response if it's in JSON format
+                enhanced_prompt_dict = json.loads(enhanced_prompt_json_str)
+                flat_prompt_list = unpack_dict_values(enhanced_prompt_dict)
+                final_prompt = ', '.join(flat_prompt_list).strip().replace(' ,', ',').replace(' .', '.')
+            except json.JSONDecodeError:
+                logging.warning("Response content is not valid JSON. Using as plain text.")
+                final_prompt = enhanced_prompt_json_str.strip('{} \n')
+            
+            return final_prompt
+        else:
+            logging.error("No 'response' field in the API response.")
+            return base_prompt
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request failed: {str(e)}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        return base_prompt  # Fallback to base prompt on error
+
+
+def generate_multiple_images(prompt, num_images=NUM_IMAGES, batch_size=BATCH_SIZE, llm_model=LLM_MODEL):
+    ws = websocket.create_connection(f"ws://{SERVER_URL}/ws?clientId={CLIENT_ID}")
+    
+    # Store the original prompt text
+    original_prompt_text = prompt["6"]["inputs"]["text"]
+    
     for i in range(0, num_images, batch_size):
-        # Update the prompt for each batch using LLM
-        diversified_prompt = diversify_prompt(prompt, llm_model)
-        print (f"Using prompt: {diversified_prompt}")
-        # Convert the diversified prompt back to JSON format if needed
-        prompt["6"]["inputs"]["text"] = diversified_prompt
+        # Diversify the prompt once per batch using the original prompt
+        if USE_PROMPT_DIVERSIFICATION:
+            diversified_prompt = diversify_prompt(original_prompt_text, llm_model)
+            prompt["6"]["inputs"]["text"] = diversified_prompt
+            logging.info(f"Using diversified prompt: {diversified_prompt}")
+        else:
+            logging.info(f"Using original prompt: {original_prompt_text}")
+            prompt["6"]["inputs"]["text"] = original_prompt_text
 
         for j in range(batch_size):
             if i + j < num_images:
-                prompt["25"]["inputs"]["noise_seed"] = random.getrandbits(64)  # Update seed for each image
+                prompt["25"]["inputs"]["noise_seed"] = random.getrandbits(64)
                 images = get_images(ws, prompt)
-                print(f"Image for seed {prompt['25']['inputs']['noise_seed']} generated")
+                logging.info(f"Image for seed {prompt['25']['inputs']['noise_seed']} generated")
 
 # Read the prompt text from a file
 with open("prompt_text.txt", "r") as file:
@@ -280,9 +367,4 @@ with open("prompt_text.txt", "r") as file:
 prompt = json.loads(prompt_text)
 prompt["6"]["inputs"]["text"] = prompt_text_from_file
 
-# Parameters for image generation
-num_images = 30
-batch_size = 3
-llm_model = "gemma2:27b-instruct-q8_0"  # Replace with your actual model name
-
-generate_multiple_images(prompt, num_images, batch_size, llm_model)
+generate_multiple_images(prompt)
