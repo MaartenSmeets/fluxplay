@@ -9,19 +9,25 @@ import random
 import logging
 import traceback
 import re
+import hashlib
+import subprocess
 
 # Configuration parameters
-SERVER_URL = "127.0.0.1:8188"
-LLM_MODEL = "gemma2unc:latest"  # Replace with your actual model name
-NUM_IMAGES = 30
-BATCH_SIZE = 3
+API_TYPE = "comfyui"  # Options: "comfyui" or "sdwebui"
+COMFYUI_SERVER_WS_URL = "ws://127.0.0.1:8188"  # WebSocket requires ws:// or wss://
+COMFYUI_SERVER_API_URL = "http://127.0.0.1:8188"  # REST API URL for ComfyUI
+SDWEBUI_SERVER_URL = "http://127.0.0.1:7860"
+OLLAMA_URL = "http://localhost:11434"  # Configurable Ollama URL
+LLM_MODEL = "???"  # Replace with your actual model name
+SDWEBUI_MODEL = "???"  # Replace with your desired model name for SDWebUI
+UNET_MODEL = "???"
+NUM_IMAGES = 30  # Total number of images to generate
+BATCH_SIZE = 5  # Number of images processed with the same diversified prompt
 TEMPERATURE = 0.7  # Adjust the temperature for creative prompt generation
 CLIENT_ID = str(uuid.uuid4())
 USE_PROMPT_DIVERSIFICATION = True  # Set to False if prompt diversification is not needed
-
-# UNET model selection (two options)
-UNET_MODEL = "flux1-dev.safetensors"
-#UNET_MODEL = "fluxunchainedAndSchnfuFluxD_fuT516xfp8E4m3fnV11.safetensors"
+IMAGE_WIDTH = 1024  # Configurable image width
+IMAGE_HEIGHT = 1024  # Configurable image height
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,8 +35,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Seed the random number generator with the current time
 random.seed(time.time())
 
-# ComfyUI default workflow prompt
-prompt_text = """
+# ComfyUI default workflow prompt (as provided in the original code)
+comfyui_prompt_text = """
 {
   "6": {
     "inputs": {
@@ -96,7 +102,7 @@ prompt_text = """
   },
   "12": {
     "inputs": {
-      "unet_name": "flux1-dev.safetensors",  # Here is where the UNET model is selected
+      "unet_name": "flux1-dev.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -224,27 +230,76 @@ prompt_text = """
 }
 """
 
-# Replace UNET model in the prompt JSON with the selected model
-prompt_text = prompt_text.replace("flux1-dev.safetensors", UNET_MODEL)
+# Configurable SDWebUI payload templates (as provided in the original code)
+sdwebui_payload_templates = {
+    "flux": {
+        "prompt": "",
+        "steps": 28,
+        "sampler_name": "Euler a",
+        "batch_size": 1,  # Batch size is always 1 for SDWebUI
+        "n_iter": 1,
+        "cfg_scale": 1.0,
+        "distilled_cfg_scale": 3.5,
+        "width": IMAGE_WIDTH,
+        "height": IMAGE_HEIGHT,
+        "negative_prompt": "",
+        "seed": -1,
+        "override_settings": {
+            "sd_model_checkpoint": SDWEBUI_MODEL
+        },
+        "override_settings_restore_afterwards": True,
+        "save_images": True
+    },
+    "sdxl": {
+        "prompt": "",
+        "steps": 30,
+        "sampler_name": "DPM++ 2M Karras",
+        "batch_size": 1,  # Batch size is always 1 for SDWebUI
+        "n_iter": 1,
+        "cfg_scale": 7.0,
+        "width": IMAGE_WIDTH,
+        "height": IMAGE_HEIGHT,
+        "negative_prompt": "",
+        "seed": -1,
+        "override_settings": {
+            "sd_model_checkpoint": SDWEBUI_MODEL
+        },
+        "override_settings_restore_afterwards": True,
+        "save_images": True
+    }
+}
 
-def queue_prompt(prompt):
+def determine_template_type(model_name):
+    """Determine the template type based on the model name."""
+    model_name_lower = model_name.lower()
+    if "flux" in model_name_lower:
+        return "flux"
+    elif "sd" in model_name_lower or "sdxl" in model_name_lower:
+        return "sdxl"
+    else:
+        return "sdxl"  # Default to sdxl if none match
+
+# Determine the template based on the model name
+SDWEBUI_TEMPLATE_TYPE = determine_template_type(SDWEBUI_MODEL)
+
+def queue_prompt_comfyui(prompt):
     p = {"prompt": prompt, "client_id": CLIENT_ID}
     data = json.dumps(p).encode('utf-8')
-    req = urllib.request.Request(f"http://{SERVER_URL}/prompt", data=data, headers={'Content-Type': 'application/json'})
+    req = urllib.request.Request(f"{COMFYUI_SERVER_API_URL}/prompt", data=data, headers={'Content-Type': 'application/json'})
     return json.loads(urllib.request.urlopen(req).read())
 
-def get_image(filename, subfolder, folder_type):
+def get_image_comfyui(filename, subfolder, folder_type):
     data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
     url_values = urllib.parse.urlencode(data)
-    with urllib.request.urlopen(f"http://{SERVER_URL}/view?{url_values}") as response:
+    with urllib.request.urlopen(f"{COMFYUI_SERVER_API_URL}/view?{url_values}") as response:
         return response.read()
 
-def get_history(prompt_id):
-    with urllib.request.urlopen(f"http://{SERVER_URL}/history/{prompt_id}") as response:
+def get_history_comfyui(prompt_id):
+    with urllib.request.urlopen(f"{COMFYUI_SERVER_API_URL}/history/{prompt_id}") as response:
         return json.loads(response.read())
 
-def get_images(ws, prompt):
-    prompt_id = queue_prompt(prompt)['prompt_id']
+def get_images_comfyui(ws, prompt):
+    prompt_id = queue_prompt_comfyui(prompt)['prompt_id']
     output_images = {}
     while True:
         out = ws.recv()
@@ -257,18 +312,32 @@ def get_images(ws, prompt):
         else:
             continue  # previews are binary data
 
-    history = get_history(prompt_id)[prompt_id]
+    history = get_history_comfyui(prompt_id)[prompt_id]
     for o in history['outputs']:
         for node_id in history['outputs']:
             node_output = history['outputs'][node_id]
             if 'images' in node_output:
                 images_output = []
                 for image in node_output['images']:
-                    image_data = get_image(image['filename'], image['subfolder'], image['type'])
+                    image_data = get_image_comfyui(image['filename'], image['subfolder'], image['type'])
                     images_output.append(image_data)
                 output_images[node_id] = images_output
 
     return output_images
+
+def generate_images_sdwebui(prompt, batch_size=1):
+    url = f"{SDWEBUI_SERVER_URL}/sdapi/v1/txt2img"
+    payload = sdwebui_payload_templates[SDWEBUI_TEMPLATE_TYPE].copy()
+    payload["prompt"] = prompt
+    payload["batch_size"] = batch_size  # Number of images to generate per API call
+
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+    result = response.json()
+    images = result['images']
+    logging.info(f"Generated {batch_size} images for prompt: {prompt}")
+
+    return images
 
 def unpack_dict_values(d):
     """Recursively unpack dictionary values into a flat list of strings."""
@@ -292,10 +361,10 @@ def diversify_prompt(base_prompt, llm_model=LLM_MODEL, temperature=TEMPERATURE):
         f"highly detailed, and unique prompt which should be based on the provided base prompt (rephrasing, diversification and elaboration is allowed). "
         f"Avoid repetition. Focus on clear visual elements, expressiveness, and emotional impact, with a strong emphasis on precision and creative "
         f"variation in style and colors. The generated prompt should be a thoughtful, complex creation. Prefer explicit descriptions."
-        f"Present the enhanced prompt in a concise format, integrating specific adjectives and details. Output only the prompt on a single line. Base prompt: {base_prompt}"
+        f"Present the enhanced prompt in a concise format. Remove redundant and non essential words from your output such as stop words or filler words. Output only the prompt on a single line. Base prompt: {base_prompt}"
     )
 
-    url = "http://localhost:11434/api/generate"
+    url = f"{OLLAMA_URL}/api/generate"
     payload = {
         "model": llm_model,
         "prompt": original_prompt,
@@ -327,6 +396,9 @@ def diversify_prompt(base_prompt, llm_model=LLM_MODEL, temperature=TEMPERATURE):
                 logging.warning("Response content is not valid JSON. Using as plain text.")
                 final_prompt = enhanced_prompt_json_str.strip('{} \n')
             
+            ## Call the restart script after the API call
+            subprocess.call("./restart_ollama.sh", shell=True)
+
             return final_prompt
         else:
             logging.error("No 'response' field in the API response.")
@@ -337,34 +409,56 @@ def diversify_prompt(base_prompt, llm_model=LLM_MODEL, temperature=TEMPERATURE):
         logging.error(f"Traceback: {traceback.format_exc()}")
         return base_prompt  # Fallback to base prompt on error
 
+def generate_filename_from_prompt(prompt_text, batch_number):
+    """Generate a filename based on the prompt text and batch number."""
+    # Create a hash of the prompt text to make the filename unique and concise
+    prompt_hash = hashlib.md5(prompt_text.encode('utf-8')).hexdigest()[:8]
+    filename_prefix = f"batch_{batch_number}_prompt_{prompt_hash}"
+    return filename_prefix
 
 def generate_multiple_images(prompt, num_images=NUM_IMAGES, batch_size=BATCH_SIZE, llm_model=LLM_MODEL):
-    ws = websocket.create_connection(f"ws://{SERVER_URL}/ws?clientId={CLIENT_ID}")
+    if API_TYPE == "comfyui":
+        ws = websocket.create_connection(f"{COMFYUI_SERVER_WS_URL}/ws?clientId={CLIENT_ID}")
     
     # Store the original prompt text
-    original_prompt_text = prompt["6"]["inputs"]["text"]
+    original_prompt_text = prompt["6"]["inputs"]["text"] if API_TYPE == "comfyui" else prompt
     
     for i in range(0, num_images, batch_size):
-        # Diversify the prompt once per batch using the original prompt
+        current_batch_size = min(batch_size, num_images - i)
+        
+        # Diversify the prompt once for the current batch
         if USE_PROMPT_DIVERSIFICATION:
             diversified_prompt = diversify_prompt(original_prompt_text, llm_model)
-            prompt["6"]["inputs"]["text"] = diversified_prompt
-            logging.info(f"Using diversified prompt: {diversified_prompt}")
+            logging.info(f"Using diversified prompt for batch {i // batch_size + 1}: {diversified_prompt}")
         else:
-            logging.info(f"Using original prompt: {original_prompt_text}")
-            prompt["6"]["inputs"]["text"] = original_prompt_text
+            diversified_prompt = original_prompt_text
+            logging.info(f"Using original prompt for batch {i // batch_size + 1}: {original_prompt_text}")
 
-        for j in range(batch_size):
-            if i + j < num_images:
-                prompt["25"]["inputs"]["noise_seed"] = random.getrandbits(64)
-                images = get_images(ws, prompt)
-                logging.info(f"Image for seed {prompt['25']['inputs']['noise_seed']} generated")
+        if API_TYPE == "comfyui":
+            prompt["6"]["inputs"]["text"] = diversified_prompt
+            prompt["9"]["inputs"]["filename_prefix"] = generate_filename_from_prompt(original_prompt_text, i // batch_size + 1)
+            prompt["25"]["inputs"]["noise_seed"] = random.getrandbits(64)
+            prompt["27"]["inputs"]["batch_size"] = current_batch_size
+
+            images = get_images_comfyui(ws, prompt)
+            logging.info(f"Generated {current_batch_size} images for seed {prompt['25']['inputs']['noise_seed']} with filename prefix {prompt['9']['inputs']['filename_prefix']}")
+        else:
+            # For SDWebUI, generate one image at a time in a loop
+            images = []
+            for _ in range(current_batch_size):
+                images.extend(generate_images_sdwebui(diversified_prompt))
+            logging.info(f"Generated {current_batch_size} images with prompt: {diversified_prompt}")
 
 # Read the prompt text from a file
 with open("prompt_text.txt", "r") as file:
     prompt_text_from_file = file.read().strip()
 
-prompt = json.loads(prompt_text)
-prompt["6"]["inputs"]["text"] = prompt_text_from_file
+if API_TYPE == "comfyui":
+    prompt = json.loads(comfyui_prompt_text)
+    prompt["6"]["inputs"]["text"] = prompt_text_from_file
+    prompt["27"]["inputs"]["width"] = IMAGE_WIDTH
+    prompt["27"]["inputs"]["height"] = IMAGE_HEIGHT
+else:
+    prompt = prompt_text_from_file
 
 generate_multiple_images(prompt)
