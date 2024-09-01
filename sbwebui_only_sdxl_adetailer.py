@@ -260,6 +260,12 @@ def switch_model(model_name):
     return True
 
 
+def save_prompt_to_file(prompt, filename="generated_prompts.txt"):
+    """Save the generated prompt to a text file."""
+    with open(filename, "a") as file:
+        file.write(prompt + "\n")
+
+
 def generate_images_sdwebui(prompt, negative_prompt, batch_size=1):
     """Generate images using SDWebUI."""
     url = f"{CONFIG_SDWEBUI_SERVER_URL}/sdapi/v1/txt2img"
@@ -371,9 +377,13 @@ def generate_multiple_images(prompt, negative_prompt, num_images=CONFIG_NUM_IMAG
             diversified_prompt = original_prompt_text
             logging.info(f"Using original prompt for batch {i // batch_size + 1}: {original_prompt_text}")
 
+        # Save the generated prompt to a file
+        save_prompt_to_file(diversified_prompt)
+
         # Generate images using SDWebUI
         images = generate_images_sdwebui(diversified_prompt, negative_prompt, current_batch_size)
         logging.info(f"Generated {current_batch_size} images with prompt: {diversified_prompt}")
+
 
 # Read the prompt text from a file
 with open("prompt_text.txt", "r") as file:
