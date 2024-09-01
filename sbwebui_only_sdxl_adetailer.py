@@ -19,7 +19,7 @@ CONFIG_SDWEBUI_ADETAILER_MODEL = "???"
 CONFIG_SAMPLER_NAME = "DPM++ 2M SDE Karras"
 CONFIG_SAMPLER_ADETAILER_NAME = "DPM++ 2M SDE Karras"
 CONFIG_NUM_IMAGES = 30
-CONFIG_BATCH_SIZE = 3
+CONFIG_BATCH_SIZE = 5
 CONFIG_TEMPERATURE = 0.7
 CONFIG_CLIENT_ID = str(uuid.uuid4())
 CONFIG_USE_PROMPT_DIVERSIFICATION = True
@@ -45,7 +45,7 @@ sdwebui_payload_templates = {
         "negative_prompt": "",
         "seed": -1,
         "override_settings": {
-            "sd_model_checkpoint": ""
+            "sd_model_checkpoint": "iniverse_v1.safetensors"
         },
         "override_settings_restore_afterwards": true,
         "save_images": true,
@@ -237,6 +237,22 @@ sdwebui_payload_templates = {
 }
 
 
+def switch_model(model_name):
+    """Switch the SDWebUI model."""
+    url = f"{CONFIG_SDWEBUI_SERVER_URL}/sdapi/v1/options"
+    payload = {
+        "sd_model_checkpoint": model_name
+    }
+
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        logging.info(f"Successfully switched to model: {model_name}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to switch model to {model_name}: {e}")
+        return False
+    return True
+
 def generate_images_sdwebui(prompt, negative_prompt, batch_size=1):
     """Generate images using SDWebUI."""
     url = f"{CONFIG_SDWEBUI_SERVER_URL}/sdapi/v1/txt2img"
@@ -283,7 +299,6 @@ def generate_images_sdwebui(prompt, negative_prompt, batch_size=1):
         return []
 
     return images
-
 
 def diversify_prompt(base_prompt, llm_model=CONFIG_LLM_MODEL, temperature=CONFIG_TEMPERATURE):
     """Diversify the prompt using an LLM model."""
@@ -333,6 +348,11 @@ def generate_multiple_images(prompt, negative_prompt, num_images=CONFIG_NUM_IMAG
     """Generate multiple images using SDWebUI."""
     original_prompt_text = prompt
 
+    # Ensure the correct model is loaded before generating images
+    if not switch_model(CONFIG_SDWEBUI_MODEL):
+        logging.error(f"Failed to switch to model {CONFIG_SDWEBUI_MODEL}. Aborting image generation.")
+        return
+
     for i in range(0, num_images, batch_size):
         current_batch_size = min(batch_size, num_images - i)
 
@@ -347,7 +367,6 @@ def generate_multiple_images(prompt, negative_prompt, num_images=CONFIG_NUM_IMAG
         # Generate images using SDWebUI
         images = generate_images_sdwebui(diversified_prompt, negative_prompt, current_batch_size)
         logging.info(f"Generated {current_batch_size} images with prompt: {diversified_prompt}")
-
 
 # Read the prompt text from a file
 with open("prompt_text.txt", "r") as file:
