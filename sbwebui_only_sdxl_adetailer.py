@@ -288,9 +288,9 @@ def generate_images_sdwebui(prompt, negative_prompt, batch_size=1):
 def diversify_prompt(base_prompt, llm_model=CONFIG_LLM_MODEL, temperature=CONFIG_TEMPERATURE):
     """Diversify the prompt using an LLM model."""
     original_prompt = (
-        f"Utilize your expertise in engineering stable diffusion prompts to create a concise detailed prompt which should be based on the provided base prompt (rephrasing, diversification reordering and elaboration is allowed). Put the most important elements at the start of the prompt. "
-        f"Avoid repetition. Focus on clear visual elements and physical objects, and emotional impact on the viewer. Prefer explicit to the point short descriptions."
-        f"Present the enhanced prompt in a concise format. Remove redundant and non-essential words from your output such as stop words or filler words. Output only the prompt on a single line. Base prompt: {base_prompt}"
+        f"Utilize your expertise in engineering Stable Diffusion XL prompts to create a creative detailed prompt which should be inspired on the provided base prompt without deviating too much from the concept and essence (rephrasing, diversification reordering and elaboration are allowed). Put the most important elements at the start of the prompt. "
+        f"Avoid repetition, stop words and filler words. Focus on clear visual elements and physical objects. Try to achieve emotional impact on the viewer. Prefer explicit to the point short descriptions."
+        f"Output only the created prompt on a single line. Base prompt: {base_prompt}"
     )
 
     url = f"{CONFIG_OLLAMA_URL}/api/generate"
