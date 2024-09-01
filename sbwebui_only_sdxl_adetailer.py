@@ -238,20 +238,27 @@ sdwebui_payload_templates = {
 
 
 def switch_model(model_name):
-    """Switch the SDWebUI model."""
-    url = f"{CONFIG_SDWEBUI_SERVER_URL}/sdapi/v1/options"
-    payload = {
-        "sd_model_checkpoint": model_name
-    }
+    """Switch the SDWebUI model by first fetching the current options, updating the model, and then posting the updated payload."""
+    options_url = f"{CONFIG_SDWEBUI_SERVER_URL}/sdapi/v1/options"
 
     try:
-        response = requests.post(url, json=payload)
+        # Fetch the current options
+        response = requests.get(options_url)
+        response.raise_for_status()
+        current_options = response.json()
+
+        # Update the model checkpoint in the current options
+        current_options["sd_model_checkpoint"] = model_name
+
+        # Post the updated options
+        response = requests.post(options_url, json=current_options)
         response.raise_for_status()
         logging.info(f"Successfully switched to model: {model_name}")
     except requests.exceptions.RequestException as e:
         logging.error(f"Failed to switch model to {model_name}: {e}")
         return False
     return True
+
 
 def generate_images_sdwebui(prompt, negative_prompt, batch_size=1):
     """Generate images using SDWebUI."""
